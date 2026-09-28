@@ -167,8 +167,11 @@ p{margin:0;}
 .grid-2{grid-template-columns:repeat(2,1fr);}
 .card{
   background:var(--panel);border:1px solid var(--border-soft);border-radius:var(--radius);
-  padding:18px;
+  padding:18px;box-shadow:0 1px 0 rgba(255,255,255,.02) inset, 0 6px 16px rgba(0,0,0,.14);
+  transition:border-color .15s ease;
 }
+:root[data-theme="light"] .card{box-shadow:0 1px 0 rgba(255,255,255,.6) inset, 0 4px 14px rgba(20,20,30,.06);}
+.card[data-open-list]:hover{border-color:var(--text-faint);}
 .card-title{font-size:12.5px;color:var(--text-faint);font-weight:700;text-transform:none;margin-bottom:8px;}
 .stat-value{font-family:var(--font-display);font-size:26px;font-weight:800;letter-spacing:-0.02em;}
 .stat-value.sm{font-size:20px;}
@@ -232,6 +235,20 @@ p{margin:0;}
 .amount-input{position:relative;}
 .amount-input .prefix{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text-faint);font-size:13.5px;font-weight:700;}
 .amount-input input{padding-left:52px !important;font-family:var(--font-display);font-weight:800;font-size:17px !important;}
+
+/* ---------- Shopping list inline edit ---------- */
+.si-name{transition:background .12s ease, border-color .12s ease;}
+.si-name:hover:not(:disabled){background:var(--panel-2) !important;border-color:var(--border) !important;}
+.si-name:focus{background:var(--panel-2) !important;border-color:var(--expense) !important;outline:none;}
+
+.sl-name-input{
+  font-family:var(--font-display);font-weight:800;font-size:22px;letter-spacing:-0.01em;
+  background:transparent;border:1px solid transparent;border-radius:10px;
+  padding:4px 8px;margin:8px -8px 0;color:var(--text);width:100%;max-width:420px;
+  transition:background .12s ease, border-color .12s ease;
+}
+.sl-name-input:hover{background:var(--panel-2);border-color:var(--border);}
+.sl-name-input:focus{background:var(--panel-2);border-color:var(--expense);outline:none;}
 
 /* ---------- Table / filters ---------- */
 .filter-bar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;align-items:center;}
@@ -341,6 +358,7 @@ p{margin:0;}
 <div id="toast-container"></div>
 <div id="modal-root"></div>
 <div id="lock-root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script>
 (function(){
 "use strict";
@@ -1854,7 +1872,10 @@ function shoppingListCard(l){
   <div class="card" data-open-list="${l.id}" style="cursor:pointer;">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;gap:8px;">
       <div><div style="font-weight:800;font-size:14.5px;">${esc(l.name)}</div><div class="hint">${l.items.length} item${l.items.length===1?'':'s'}${skippedCount?` · ${skippedCount} skipped`:''} · ${usageLabel}</div></div>
-      <span class="pill pill-transfer" style="flex-shrink:0;">${fmtMoney(totals.est)}</span>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+        <button class="icon-btn btn-sm sl-pdf-btn" data-id="${l.id}" title="Download PDF" style="width:30px;height:30px;">${ICONS.download}</button>
+        <span class="pill pill-transfer">${fmtMoney(totals.est)}</span>
+      </div>
     </div>
     <div style="display:flex;justify-content:space-between;font-size:13px;">
       <span style="color:var(--text-faint);">Expected this time</span>
@@ -1869,15 +1890,17 @@ function renderShoppingListDetail(l){
   <div class="page-head">
     <div>
       <button class="btn btn-sm btn-ghost" id="sl-back">← All lists</button>
-      <h2 style="margin-top:8px;">${esc(l.name)}</h2>
-      <div class="sub">${hist.length ? `Used ${hist.length}× · last on ${fmtDateShort(hist[0].date)}` : 'Not used yet — this list is reusable every time you shop'}</div>
+      <input type="text" id="sl-name-input" class="sl-name-input" value="${esc(l.name)}" placeholder="List name" aria-label="List name">
+      <div class="sub" style="margin-top:2px;">${hist.length ? `Used ${hist.length}× · last on ${fmtDateShort(hist[0].date)}` : 'Not used yet — this list is reusable every time you shop'} · <span style="color:var(--text-faint);">tap the name above to rename</span></div>
     </div>
-    <button class="btn btn-danger btn-sm" id="sl-delete">${ICONS.trash} Delete list</button>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-sm" id="sl-download-pdf">${ICONS.download} Download PDF</button>
+      <button class="btn btn-danger btn-sm" id="sl-delete">${ICONS.trash} Delete list</button>
+    </div>
   </div>
 
   <div class="card" style="margin-bottom:14px;">
     ${l.items.length ? `
-    <p class="hint" style="margin-bottom:10px;">Tap the eye icon to skip an item you're not buying this time — it's excluded from the total but stays on the list for next time. Quantities are editable too.</p>
     <div style="overflow-x:auto;">
     <table class="shop-table" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:680px;">
       <thead><tr style="text-align:left;color:var(--text-faint);font-size:11px;">
@@ -1928,7 +1951,9 @@ function shoppingItemRow(it){
   const skipped = !!it.skip;
   return `
   <tr data-item-id="${it.id}" style="border-top:1px solid var(--border-soft);${skipped?'opacity:.45;':''}">
-    <td data-label="Item" style="padding:7px 8px;font-weight:600;${skipped?'text-decoration:line-through;':''}">${esc(it.name)}</td>
+    <td data-label="Item" style="padding:7px 8px;font-weight:600;min-width:110px;">
+      <input type="text" class="si-name" data-id="${it.id}" value="${esc(it.name)}" style="flex:1;min-width:90px;max-width:100%;background:transparent;border:1px solid transparent;border-radius:8px;padding:6px 7px;font-weight:600;text-align:left;color:var(--text);${skipped?'text-decoration:line-through;color:var(--text-faint);':''}" ${skipped?'disabled':''}>
+    </td>
     <td data-label="Qty" style="padding:7px 8px;">
       <input type="number" step="0.01" min="0" class="si-qty" data-id="${it.id}" value="${it.qty}" style="width:64px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:6px 8px;" ${skipped?'disabled':''}>
       ${it.unit?' '+esc(it.unit):''}
@@ -1956,12 +1981,328 @@ function bindShoppingEvents(){
       UI.currentShoppingListId=null; toast('Shopping list deleted.'); rerenderPage();
     }, true);
   });
+  $('#sl-download-pdf')?.addEventListener('click', ()=>{
+    const list = currentList();
+    if(list) generateShoppingListPDF(list);
+  });
+  $('#sl-name-input')?.addEventListener('input', (e)=>{
+    const list = currentList(); if(!list) return;
+    list.name = e.target.value;
+    persistShoppingList(list);
+  });
+  $('#sl-name-input')?.addEventListener('blur', (e)=>{
+    const list = currentList(); if(!list) return;
+    const trimmed = e.target.value.trim();
+    list.name = trimmed || list.name || 'Shopping list'; // never leave a list nameless
+    e.target.value = list.name;
+    persistShoppingList(list);
+  });
+  $$('.sl-pdf-btn').forEach(b=>b.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    const list = STATE.shoppingLists.find(l=>l.id===b.dataset.id);
+    if(list) generateShoppingListPDF(list);
+  }));
   $('#si-add')?.addEventListener('click', addShoppingItem);
   $$('.si-del').forEach(b=>b.addEventListener('click', ()=>deleteShoppingItem(b.dataset.id)));
+  $$('.si-name').forEach(inp=>{
+    inp.addEventListener('input', ()=>onNameInput(inp));
+    inp.addEventListener('blur', ()=>{
+      const list = currentList(); if(!list) return;
+      const it = list.items.find(i=>i.id===inp.dataset.id); if(!it) return;
+      const trimmed = inp.value.trim();
+      it.name = trimmed || it.name; // never leave an item nameless
+      inp.value = it.name;
+      persistShoppingList(list);
+    });
+  });
   $$('.si-qty').forEach(inp=>inp.addEventListener('input', ()=>onQtyInput(inp)));
   $$('.si-actual').forEach(inp=>inp.addEventListener('input', ()=>onActualPriceInput(inp)));
   $$('.si-skip').forEach(b=>b.addEventListener('click', ()=>toggleSkipItem(b.dataset.id)));
   $('#sl-finish')?.addEventListener('click', openFinishShoppingModal);
+}
+
+/* ---------- Shopping list PDF export ---------- */
+function generateShoppingListPDF(list){
+  if(typeof window.jspdf === 'undefined' || !window.jspdf.jsPDF){
+    toast('The PDF library did not load — check your internet connection and try again.', true);
+    return;
+  }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'pt', format:'a4' });
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const margin = 40;
+  const colX = { item:margin, qty:margin+180, unit:margin+225, est:margin+270, actual:margin+345, sub:margin+420, status:margin+490 };
+  const rightEdge = pageW-margin;
+
+  function drawHeader(){
+    doc.setFillColor(229,72,77);
+    doc.rect(0,0,pageW,64,'F');
+    doc.setTextColor(255,255,255);
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(18);
+    doc.text('Feisal Finance', margin, 28);
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(10.5);
+    doc.text('Shopping List', margin, 45);
+    doc.setFontSize(9);
+    doc.text(fmtDateLong(todayISO()), rightEdge, 45, {align:'right'});
+    doc.setTextColor(20,20,20);
+  }
+  function drawTableHeader(y){
+    doc.setFillColor(35,35,40);
+    doc.rect(margin, y, rightEdge-margin, 20, 'F');
+    doc.setTextColor(255,255,255);
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(8.5);
+    doc.text('ITEM', colX.item+4, y+13);
+    doc.text('QTY', colX.qty+4, y+13);
+    doc.text('EST/UNIT', colX.est+4, y+13);
+    doc.text('ACTUAL/UNIT', colX.actual+4, y+13);
+    doc.text('SUBTOTAL', colX.sub+4, y+13);
+    doc.text('STATUS', colX.status+4, y+13);
+    doc.setTextColor(20,20,20);
+    return y+20;
+  }
+
+  drawHeader();
+  let y = 88;
+  doc.setFont('helvetica','bold');
+  doc.setFontSize(15);
+  doc.text(list.name, margin, y);
+  y += 16;
+  doc.setFont('helvetica','normal');
+  doc.setFontSize(9);
+  doc.setTextColor(110,110,110);
+  const hist = listHistory(list);
+  const subtitle = hist.length ? `Used ${hist.length} time${hist.length===1?'':'s'} — last on ${fmtDateShort(hist[0].date)}` : 'First time using this list';
+  doc.text(subtitle, margin, y);
+  doc.setTextColor(20,20,20);
+  y += 18;
+
+  y = drawTableHeader(y);
+  doc.setFont('helvetica','normal');
+  doc.setFontSize(9);
+
+  const totals = shoppingListTotals(list);
+
+  list.items.forEach((it, idx)=>{
+    const eSub = Number(it.qty)*Number(it.estPrice);
+    const hasActual = it.actualPrice!=null && it.actualPrice!=='';
+    const aSub = Number(it.qty)*(hasActual?Number(it.actualPrice):Number(it.estPrice));
+    const diff = eSub-aSub;
+    const skipped = !!it.skip;
+
+    const nameLines = doc.splitTextToSize(it.name||'', 172);
+    const rowH = Math.max(18, nameLines.length*11+6);
+
+    if(y+rowH > pageH-70){
+      doc.addPage();
+      y = margin;
+      y = drawTableHeader(y);
+      doc.setFont('helvetica','normal');
+      doc.setFontSize(9);
+    }
+
+    if(idx % 2 === 0){
+      doc.setFillColor(246,246,248);
+      doc.rect(margin, y, rightEdge-margin, rowH, 'F');
+    }
+    doc.setTextColor(skipped?150:20,skipped?150:20,skipped?150:20);
+    doc.text(nameLines, colX.item+4, y+11);
+    doc.text(String(it.qty)+(it.unit?' '+it.unit:''), colX.qty+4, y+11);
+    doc.text(fmtMoney(it.estPrice), colX.est+4, y+11);
+    doc.text(hasActual ? fmtMoney(it.actualPrice) : '—', colX.actual+4, y+11);
+    doc.text(skipped ? '—' : fmtMoney(aSub), colX.sub+4, y+11);
+    let statusTxt = '—';
+    if(skipped) statusTxt = 'Skipped';
+    else if(hasActual) statusTxt = diff>=0 ? 'Saved '+fmtMoney(diff) : 'Over '+fmtMoney(-diff);
+    if(!skipped && hasActual) doc.setTextColor(diff>=0?34:200, diff>=0?140:60, diff>=0?90:60);
+    doc.text(statusTxt, colX.status+4, y+11);
+    doc.setTextColor(20,20,20);
+    y += rowH;
+  });
+
+  y += 10;
+  if(y > pageH-90){ doc.addPage(); y = margin; }
+  doc.setDrawColor(220,220,225);
+  doc.line(margin, y, rightEdge, y);
+  y += 18;
+
+  doc.setFont('helvetica','bold');
+  doc.setFontSize(11);
+  doc.text('Expected total: '+fmtMoney(totals.est), margin, y);
+  doc.text('Current total: '+fmtMoney(totals.actual), margin+220, y);
+  const diffLabel = totals.diff===0 ? 'On budget' : (totals.diff>0 ? 'Saved '+fmtMoney(totals.diff) : 'Over by '+fmtMoney(-totals.diff));
+  doc.setTextColor(totals.diff>=0?34:200, totals.diff>=0?140:60, totals.diff>=0?90:60);
+  doc.text(diffLabel, margin+430, y);
+  doc.setTextColor(20,20,20);
+  y += 26;
+
+  if(hist.length){
+    if(y > pageH-90){ doc.addPage(); y = margin; }
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(11);
+    doc.text('Past trips', margin, y);
+    y += 16;
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(9);
+    hist.slice(0,15).forEach(h=>{
+      if(y > pageH-50){ doc.addPage(); y = margin; }
+      doc.text(fmtDateShort(h.date)+(h.accountId?' · '+accountName(h.accountId):''), margin, y);
+      doc.text(fmtMoney(h.total), rightEdge, y, {align:'right'});
+      y += 15;
+    });
+  }
+
+  const pageCount = doc.internal.getNumberOfPages();
+  for(let p=1;p<=pageCount;p++){
+    doc.setPage(p);
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(8);
+    doc.setTextColor(150,150,150);
+    doc.text(`Feisal Finance · Page ${p} of ${pageCount}`, pageW/2, pageH-20, {align:'center'});
+  }
+
+  const safeName = (list.name||'shopping-list').replace(/[^a-z0-9]+/gi,'-').replace(/^-+|-+$/g,'').toLowerCase() || 'shopping-list';
+  doc.save(`${safeName}-${todayISO()}.pdf`);
+  toast('Shopping list PDF downloaded.');
+}
+
+/* Truncates text to fit a column width, adding an ellipsis — used so long category/account
+   names never overlap the next column instead of being wrapped (which would misalign rows). */
+function pdfTruncate(doc, text, maxWidth){
+  text = String(text==null?'':text);
+  if(doc.getTextWidth(text) <= maxWidth) return text;
+  while(text.length>0 && doc.getTextWidth(text+'…') > maxWidth){ text = text.slice(0,-1); }
+  return text ? text+'…' : '';
+}
+
+/* Shared PDF report builder for any list of transactions — used by the Transactions, History,
+   Income, Savings and Dashboard "Download PDF" buttons. `summary` is an optional row of
+   headline stats (e.g. Income/Expenses/Net) drawn above the table. */
+function generateTransactionsPDF({ title, subtitle, transactions, summary, filename }){
+  if(typeof window.jspdf === 'undefined' || !window.jspdf.jsPDF){
+    toast('The PDF library did not load — check your internet connection and try again.', true);
+    return;
+  }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'pt', format:'a4' });
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const margin = 40;
+  const rightEdge = pageW-margin;
+  const colX = { date:margin, type:margin+55, category:margin+110, account:margin+210, note:margin+340 };
+  const colW = { category: colX.account-colX.category-8, account: colX.note-colX.account-8, note: rightEdge-70-colX.note-8 };
+
+  function drawHeader(){
+    doc.setFillColor(229,72,77);
+    doc.rect(0,0,pageW,64,'F');
+    doc.setTextColor(255,255,255);
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(18);
+    doc.text('Feisal Finance', margin, 28);
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(10.5);
+    doc.text(title, margin, 45);
+    doc.setFontSize(9);
+    doc.text(fmtDateLong(todayISO()), rightEdge, 45, {align:'right'});
+    doc.setTextColor(20,20,20);
+  }
+  function drawTableHeader(y){
+    doc.setFillColor(35,35,40);
+    doc.rect(margin, y, rightEdge-margin, 20, 'F');
+    doc.setTextColor(255,255,255);
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(8.5);
+    doc.text('DATE', colX.date+4, y+13);
+    doc.text('TYPE', colX.type+4, y+13);
+    doc.text('CATEGORY', colX.category+4, y+13);
+    doc.text('ACCOUNT', colX.account+4, y+13);
+    doc.text('NOTE', colX.note+4, y+13);
+    doc.text('AMOUNT', rightEdge-4, y+13, {align:'right'});
+    doc.setTextColor(20,20,20);
+    return y+20;
+  }
+
+  drawHeader();
+  let y = 88;
+  if(subtitle){
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(9);
+    doc.setTextColor(110,110,110);
+    doc.text(doc.splitTextToSize(subtitle, rightEdge-margin), margin, y);
+    doc.setTextColor(20,20,20);
+    y += 18;
+  }
+  if(summary && summary.length){
+    const stepX = (rightEdge-margin)/summary.length;
+    summary.forEach((s,i)=>{
+      const x = margin + stepX*i;
+      doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(130,130,130);
+      doc.text(s.label, x, y);
+      doc.setFont('helvetica','bold'); doc.setFontSize(12.5);
+      const c = s.color || [20,20,20];
+      doc.setTextColor(c[0],c[1],c[2]);
+      doc.text(s.value, x, y+16);
+    });
+    doc.setTextColor(20,20,20);
+    y += 34;
+  }
+
+  y = drawTableHeader(y);
+  doc.setFont('helvetica','normal');
+  doc.setFontSize(8.5);
+
+  (transactions||[]).forEach((t, idx)=>{
+    const noteLines = doc.splitTextToSize(t.note||'', colW.note);
+    const rowH = Math.max(16, noteLines.length*10+6);
+    if(y+rowH > pageH-70){
+      doc.addPage();
+      y = margin;
+      y = drawTableHeader(y);
+      doc.setFont('helvetica','normal');
+      doc.setFontSize(8.5);
+    }
+    if(idx % 2 === 0){
+      doc.setFillColor(246,246,248);
+      doc.rect(margin, y, rightEdge-margin, rowH, 'F');
+    }
+    doc.setTextColor(20,20,20);
+    doc.text(fmtDateShort(t.date), colX.date+4, y+11);
+    const typeLabel = t.type==='income' ? 'Income' : t.type==='expense' ? 'Expense' : 'Transfer';
+    doc.text(typeLabel, colX.type+4, y+11);
+    doc.text(pdfTruncate(doc, t.category||'', colW.category), colX.category+4, y+11);
+    const acctLabel = t.type==='transfer' ? `${accountName(t.accountId)} -> ${accountName(t.destinationAccountId)}` : accountName(t.accountId);
+    doc.text(pdfTruncate(doc, acctLabel, colW.account), colX.account+4, y+11);
+    doc.text(noteLines, colX.note+4, y+11);
+    const amtColor = t.type==='income' ? [34,140,90] : t.type==='expense' ? [200,60,60] : [60,110,180];
+    doc.setTextColor(amtColor[0],amtColor[1],amtColor[2]);
+    const sign = t.type==='income' ? '+' : t.type==='expense' ? '-' : '';
+    doc.text(sign+fmtMoney(t.amount), rightEdge-4, y+11, {align:'right'});
+    doc.setTextColor(20,20,20);
+    y += rowH;
+  });
+
+  if(!transactions || !transactions.length){
+    doc.setFont('helvetica','italic');
+    doc.setFontSize(10);
+    doc.setTextColor(140,140,140);
+    doc.text('No transactions to show.', margin, y+18);
+    doc.setTextColor(20,20,20);
+  }
+
+  const pageCount = doc.internal.getNumberOfPages();
+  for(let p=1;p<=pageCount;p++){
+    doc.setPage(p);
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(8);
+    doc.setTextColor(150,150,150);
+    doc.text(`Feisal Finance · Page ${p} of ${pageCount}`, pageW/2, pageH-20, {align:'center'});
+  }
+
+  doc.save(filename);
+  toast('PDF downloaded.');
 }
 function openNewShoppingListModal(){
   openModal({
@@ -2029,6 +2370,14 @@ function onQtyInput(inp){
   updateShoppingTotalsUI(list);
   persistShoppingList(list);
 }
+/* Lets a misspelled or wrong item name be corrected in place — same debounced-save pattern as
+   qty/actual price — instead of having to delete the row and re-add it from scratch. */
+function onNameInput(inp){
+  const list = currentList(); if(!list) return;
+  const it = list.items.find(i=>i.id===inp.dataset.id); if(!it) return;
+  it.name = inp.value;
+  persistShoppingList(list);
+}
 /* Skips/unskips an item for this trip — it stays on the list permanently (so you don't have to
    retype it next time), but is excluded from both the estimated and actual totals while skipped. */
 async function toggleSkipItem(itemId){
@@ -2045,8 +2394,12 @@ function updateShoppingRowUI(it){
   if(!row) return;
   const skipped = !!it.skip;
   row.style.opacity = skipped ? '.45' : '';
-  const nameCell = row.querySelector('td[data-label="Item"]');
-  if(nameCell) nameCell.style.textDecoration = skipped ? 'line-through' : 'none';
+  const nameInput = row.querySelector('.si-name');
+  if(nameInput){
+    nameInput.disabled = skipped;
+    nameInput.style.textDecoration = skipped ? 'line-through' : 'none';
+    nameInput.style.color = skipped ? 'var(--text-faint)' : 'var(--text)';
+  }
   const eSub = Number(it.qty)*Number(it.estPrice);
   const hasActual = it.actualPrice!=null && it.actualPrice!=='';
   const aSub = Number(it.qty)*(hasActual?Number(it.actualPrice):Number(it.estPrice));
@@ -2246,7 +2599,7 @@ function bindSettingsEvents(){
   $('#export-btn')?.addEventListener('click', exportBackup);
   $('#import-file')?.addEventListener('change', handleImportFile);
   $('#reset-btn')?.addEventListener('click', ()=>{
-    confirmModal('Reset all data?','This permanently deletes everything on this device. Type cannot be undone.', async ()=>{
+    confirmModal('Reset all data?','This permanently deletes everything on this device. This cannot be undone.', async ()=>{
       await Promise.all(['accounts','transactions','categories','goals','recurring','shoppinglists','settings'].map(dbClear));
       STATE.accounts=[]; STATE.transactions=[]; STATE.categories=[]; STATE.goals=[]; STATE.recurring=[]; STATE.shoppingLists=[];
       STATE.settings = { id:'app', name:'Feisal Ahmed', currency:'KSh', theme:'dark', pinHash:null, onboarded:false };
@@ -2923,7 +3276,9 @@ function openGoalModal(id){
       status: existing?existing.status:'active',
       createdAt: existing?existing.createdAt:Date.now(),
     };
-    if(g.currentAmount>=g.targetAmount) g.status='completed';
+    // keep completion status in sync with the amounts — editing currentAmount back down
+    // (e.g. fixing a typo) should un-complete a goal, not leave it stuck as "Completed"
+    g.status = g.currentAmount>=g.targetAmount ? 'completed' : 'active';
     await dbPut('goals', stamp(g));
     const idx = STATE.goals.findIndex(x=>x.id===g.id);
     if(idx>=0) STATE.goals[idx]=g; else STATE.goals.push(g);
@@ -3080,6 +3435,54 @@ window.addEventListener('resize', debounce(()=>{
 
 document.addEventListener('keydown', (e)=>{
   if(e.key==='Escape' && document.querySelector('.modal-overlay')) closeModal();
+});
+
+/* Pressing Enter in a field moves to the next field in the same logical group (a modal,
+   an inline "add row" like the shopping-list item form, or a settings card) instead of
+   doing nothing — and from the last field, it activates that group's main button, so a
+   whole form (e.g. item name → qty → unit → price) can be filled in and submitted without
+   ever touching the mouse. Enter inside a multi-line textarea still just inserts a newline. */
+function enterableFields(scope){
+  return Array.from(scope.querySelectorAll('input, select')).filter(el=>{
+    if(el.disabled) return false;
+    if(['file','button','submit','hidden'].includes(el.type)) return false;
+    if(el.offsetParent===null) return false; // skip fields hidden by a collapsed section
+    return true;
+  });
+}
+function findGroupPrimaryButton(scope){
+  let node = scope;
+  for(let i=0; i<6 && node; i++){
+    const btn = node.querySelector('.btn-primary:not(:disabled)');
+    if(btn) return btn;
+    node = node.parentElement;
+  }
+  return null;
+}
+document.addEventListener('keydown', (e)=>{
+  if(e.key!=='Enter') return;
+  const el = e.target;
+  if(!(el instanceof HTMLElement)) return;
+  const tag = el.tagName;
+  if(tag!=='INPUT' && tag!=='SELECT') return; // let textareas keep normal Enter-for-newline behavior
+  if(['file','button','submit','hidden'].includes(el.type)) return;
+
+  if(el.closest('.filter-bar')){ e.preventDefault(); el.blur(); return; } // live filters just dismiss the keyboard
+
+  const scope = el.closest('.modal') || el.closest('.field-row') || el.closest('.card');
+  if(!scope) return;
+  e.preventDefault();
+
+  const fields = enterableFields(scope);
+  const idx = fields.indexOf(el);
+  if(idx>-1 && idx<fields.length-1){
+    const next = fields[idx+1];
+    next.focus();
+    if(next.tagName==='INPUT' && next.type!=='checkbox' && next.type!=='radio' && typeof next.select==='function') next.select();
+  } else {
+    const btn = findGroupPrimaryButton(scope);
+    if(btn) btn.click(); else el.blur();
+  }
 });
 
 /* =========================================================
